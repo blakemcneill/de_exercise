@@ -10,12 +10,13 @@ RAW_DATASET_PATH = f"{DATASET_DIRECTORY}/{DATASET_OUTPUT_NAME}.{OUTPUT_FORMAT}"
 DUCK_DB_NAME = "air_quality.duckdb"
 DUCK_DB_PATH = f"{DATASET_DIRECTORY}/{DUCK_DB_NAME}"
 
-#region Bronze layer
+# region Bronze layer
+
 
 def build_bronze_layer():
-    '''
+    """
     Downloads the raw dataset and saves it to disk.
-    '''
+    """
     print("Injesting data...")
 
     check_root_directory()
@@ -30,17 +31,17 @@ def build_bronze_layer():
 
 
 def write_data_to_disk(output_path: str, output_content: any):
-    '''
+    """
     Write the raw data to disk.
-    '''
+    """
     with open(output_path, "wb") as file:
-            file.write(output_content)
+        file.write(output_content)
 
 
 def request_data(format: str):
-    '''
+    """
     Runs the data request and handles issues.
-    '''
+    """
     VALID_FORMATS = {"csv", "json"}
     if format not in VALID_FORMATS:
         raise ValueError(f"The requested format '{format}' must be one of the following: {VALID_FORMATS}.")
@@ -55,16 +56,17 @@ def request_data(format: str):
 
 
 def check_root_directory():
-    ''' 
+    """
     Checks to make sure the root directory exists. If not, create it.
-    '''
+    """
 
-    os.makedirs(name=DATASET_DIRECTORY,exist_ok=True)
+    os.makedirs(name=DATASET_DIRECTORY, exist_ok=True)
+
 
 def write_raw_data():
-    '''
+    """
     Writes the data from the CSV into DuckDB
-    '''
+    """
     with duckdb.connect(DUCK_DB_PATH) as conn:
         # Create the table if it doesn't exist
         conn.sql("""
@@ -86,25 +88,17 @@ def write_raw_data():
         """)
 
         conn.read_csv(
-        RAW_DATASET_PATH,
-        delimiter=',',
-        quotechar='"',
-        escapechar='"',
-        strict_mode=False,
-        header=True).insert_into("raw_data")
+            RAW_DATASET_PATH, delimiter=",", quotechar='"', escapechar='"', strict_mode=False, header=True
+        ).insert_into("raw_data")
 
-#endregion
 
-#region Silver layer
+# endregion
+
+# region Silver layer
+
 
 def build_silver_layer():
-    rel = duckdb.read_csv(
-        RAW_DATASET_PATH,
-        delimiter=',',
-        quotechar='"',
-        escapechar='"',
-        strict_mode=False,
-        header=True)
+    rel = duckdb.read_csv(RAW_DATASET_PATH, delimiter=",", quotechar='"', escapechar='"', strict_mode=False, header=True)
 
     # Let's run some tests
     tests_orchestration(rel=rel)
@@ -122,9 +116,9 @@ def build_silver_layer():
 
 
 def build_date_dim():
-    '''
+    """
     Create and populate the date dim.
-    '''
+    """
 
     # Create the sequence if it doesn't exist
     exec_duckdb_sql("""
@@ -148,9 +142,9 @@ def build_date_dim():
 
 
 def build_site_dim():
-    '''
+    """
     Create and populate the site dim.
-    '''
+    """
     # Create the sequence if it doesn't exist
     exec_duckdb_sql("""
     CREATE SEQUENCE IF NOT EXISTS dim_site_sequence START 1;
@@ -173,9 +167,9 @@ def build_site_dim():
 
 
 def build_parameter_dim():
-    '''
+    """
     Create and populate the parameter dim.
-    '''
+    """
     # Create the sequence if it doesn't exist
     exec_duckdb_sql("""
     CREATE SEQUENCE IF NOT EXISTS dim_parameter_sequence START 1;
@@ -196,10 +190,11 @@ def build_parameter_dim():
     ON CONFLICT (parameter) DO NOTHING;
     """)
 
+
 def build_description_dim():
-    '''
+    """
     Create and populate the description dim.
-    '''
+    """
 
     # Create the sequence if it doesn't exist
     exec_duckdb_sql("""
@@ -223,9 +218,9 @@ def build_description_dim():
 
 
 def build_health_advisory_dim():
-    '''
+    """
     Create and populate the health_advisory dim.
-    '''
+    """
 
     # Create the sequence if it doesn't exist
     exec_duckdb_sql("""
@@ -251,9 +246,9 @@ def build_health_advisory_dim():
 
 
 def build_health_effects_dim():
-    '''
+    """
     Create and populate the health_effects dim.
-    '''
+    """
 
     # Create the sequence if it doesn't exist
     exec_duckdb_sql("""
@@ -279,9 +274,9 @@ def build_health_effects_dim():
 
 
 def build_daily_air_quality_fact():
-    '''
+    """
     Create and populate the daily_air_quality facts table
-    '''
+    """
 
     # Create the table if it doesn't exist
     exec_duckdb_sql("""
@@ -332,12 +327,13 @@ def build_daily_air_quality_fact():
     """)
 
 
-#region Silver layer tests
+# region Silver layer tests
+
 
 def tests_orchestration(rel: any):
-    '''
+    """
     Orchestration function to run tests again the raw data relation.
-    '''
+    """
     print("Starting tests...")
 
     raw_row_count(rel=rel)
@@ -346,26 +342,30 @@ def tests_orchestration(rel: any):
 
     print("Tests complete.")
 
+
 def raw_row_count(rel: any):
-    '''
+    """
     Make sure there are more than 0 records.
     If there are no records, we're going to assume we got bad data or ran a bad query.
-    '''
+    """
     if len(rel) == 0:
         raise ValueError("There are 0 records from the raw data source. Check to make sure injestion didn't fail.")
 
+
 def no_negative_index_value(rel):
-    '''
+    """
     Make sure index_value does not contain a value less than 0
-    '''
+    """
     if len(rel.filter("index_value < 0")) > 0:
         raise ValueError("There is a record with an index_value of less than 0.")
 
-#endregion
 
-#endregion
+# endregion
 
-#region Gold layer
+# endregion
+
+# region Gold layer
+
 
 def build_gold_layer():
     # Create the table
@@ -380,7 +380,6 @@ def build_gold_layer():
         PRIMARY KEY (start_date, end_date)
     );
     """)
-
 
     # Insert the data
     exec_duckdb_sql("""
@@ -429,19 +428,23 @@ def build_gold_layer():
 
     print_polution_episodes()
 
+
 def print_polution_episodes():
     with duckdb.connect(DUCK_DB_PATH) as conn:
         conn.table("polution_episodes").order("start_date, end_date").show()
 
-#endregion
 
-#region Helper functions
+# endregion
+
+# region Helper functions
+
 
 def exec_duckdb_sql(sql: str):
     with duckdb.connect(DUCK_DB_PATH) as conn:
         conn.sql(sql)
 
-#endregion
+
+# endregion
 
 
 # MAIN FUNCTION
