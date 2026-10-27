@@ -352,7 +352,70 @@ def no_negative_index_value(rel):
 #region Gold layer
 
 def create_gold_layer():
-    pass
+    with duckdb.connect(DUCK_DB_PATH) as conn:
+        # Create the table
+        conn.sql("""
+        CREATE TABLE IF NOT EXISTS polution_episodes (
+            start_date DATE NOT NULL,
+            end_date DATE NOT NULL,
+            num_days INT NOT NULL,
+            max_peak FLOAT NOT NULL,
+            peak_parameter VARCHAR NOT NULL,
+            max_sites INT NOT NULL,
+            PRIMARY KEY (start_date, end_date)
+        );
+        """)
+
+        # Insert the data
+        conn.sql("""
+        WITH county_day AS (
+            SELECT
+                dd.date,
+                max(fdaq.index_value) AS peak_value,
+                arg_max(dp.parameter, fdaq.index_value) AS peak_parameter,
+                count(DISTINCT site_id) FILTER (WHERE index_value > 100) AS sites_over
+            FROM fact_daily_air_quality fdaq
+            INNER JOIN dim_date dd
+                ON fdaq.date_id = dd.id
+            INNER JOIN dim_parameter dp
+                ON fdaq.parameter_id = dp.id
+            GROUP BY dd.date
+            HAVING sites_over > 2
+        ),
+        grouped AS (
+            SELECT
+                date,
+                peak_value,
+                peak_parameter,
+                sites_over,
+                date - (row_number() OVER (ORDER BY date))::INT * INTERVAL 1 DAY AS grp
+            FROM county_day
+        )
+        INSERT INTO polution_episodes (
+            start_date,
+            end_date,
+            num_days,
+            max_peak,
+            peak_parameter,
+            max_sites
+        )
+        SELECT
+            min(date) AS start_date,
+            max(date) AS end_date,
+            count(1) AS num_days,
+            max(peak_value) AS max_peak,
+            arg_max(peak_parameter, peak_value) AS peak_parameter,
+            max(sites_over) AS max_sites
+        FROM grouped
+        GROUP BY grp
+        ON CONFLICT (start_date, end_date) DO NOTHING;
+        """)
+
+        print_polution_episodes()
+
+def print_polution_episodes():
+    with duckdb.connect(DUCK_DB_PATH) as conn:
+        conn.table("polution_episodes").show()
 
 #endregion
 
