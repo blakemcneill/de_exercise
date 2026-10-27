@@ -10,9 +10,9 @@ RAW_DATASET_PATH = f"{DATASET_DIRECTORY}/{DATASET_OUTPUT_NAME}.{OUTPUT_FORMAT}"
 DUCK_DB_NAME = "air_quality.duckdb"
 DUCK_DB_PATH = f"{DATASET_DIRECTORY}/{DUCK_DB_NAME}"
 
-#region Injestion functions (Bronze Layer)
+#region Bronze layer
 
-def injest_data():
+def build_bronze_layer():
     '''
     Downloads the raw dataset and saves it to disk.
     '''
@@ -24,33 +24,7 @@ def injest_data():
 
     write_data_to_disk(RAW_DATASET_PATH, response.content)
 
-    with duckdb.connect(DUCK_DB_PATH) as conn:
-        # Create the table if it doesn't exist
-        conn.sql("""
-        CREATE TABLE IF NOT EXISTS raw_data(
-            id INTEGER,
-            date DATE,
-            site VARCHAR,
-            parameter VARCHAR,
-            index_value FLOAT,
-            description VARCHAR,
-            health_advisory VARCHAR,
-            health_effects VARCHAR
-        );
-        """)
-
-        # Truncate the table
-        conn.sql("""
-        TRUNCATE TABLE raw_data;
-        """)
-
-        conn.read_csv(
-        RAW_DATASET_PATH,
-        delimiter=',',
-        quotechar='"',
-        escapechar='"',
-        strict_mode=False,
-        header=True).insert_into("raw_data")
+    write_raw_data()
 
     print("Data injestion complete.")
 
@@ -86,6 +60,38 @@ def check_root_directory():
     '''
 
     os.makedirs(name=DATASET_DIRECTORY,exist_ok=True)
+
+def write_raw_data():
+    '''
+    Writes the data from the CSV into DuckDB
+    '''
+    with duckdb.connect(DUCK_DB_PATH) as conn:
+        # Create the table if it doesn't exist
+        conn.sql("""
+        CREATE TABLE IF NOT EXISTS raw_data(
+            id INTEGER,
+            date DATE,
+            site VARCHAR,
+            parameter VARCHAR,
+            index_value FLOAT,
+            description VARCHAR,
+            health_advisory VARCHAR,
+            health_effects VARCHAR
+        );
+        """)
+
+        # Truncate the table
+        conn.sql("""
+        TRUNCATE TABLE raw_data;
+        """)
+
+        conn.read_csv(
+        RAW_DATASET_PATH,
+        delimiter=',',
+        quotechar='"',
+        escapechar='"',
+        strict_mode=False,
+        header=True).insert_into("raw_data")
 
 #endregion
 
@@ -315,7 +321,6 @@ def build_daily_air_quality_fact():
         ON CONFLICT (date_id, site_id, parameter_id) DO NOTHING;
         """)
 
-#endregion
 
 #region Silver layer tests
 
@@ -348,10 +353,11 @@ def no_negative_index_value(rel):
 
 #endregion
 
+#endregion
 
 #region Gold layer
 
-def create_gold_layer():
+def build_gold_layer():
     with duckdb.connect(DUCK_DB_PATH) as conn:
         # Create the table
         conn.sql("""
@@ -422,11 +428,11 @@ def print_polution_episodes():
 
 # MAIN FUNCTION
 def main():
-    injest_data()
+    build_bronze_layer()
 
     build_silver_layer()
 
-    create_gold_layer()
+    build_gold_layer()
 
 
 if __name__ == "__main__":
