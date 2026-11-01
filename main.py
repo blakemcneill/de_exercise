@@ -17,7 +17,7 @@ def build_bronze_layer():
     """
     Downloads the raw dataset and saves it to disk.
     """
-    print("Injesting data...")
+    print("Creating bronze layer...")
 
     check_root_directory()
 
@@ -27,7 +27,7 @@ def build_bronze_layer():
 
     write_raw_data()
 
-    print("Data injestion complete.")
+    print("Bronze layer created!")
 
 
 def write_data_to_disk(output_path: str, output_content: any):
@@ -98,6 +98,12 @@ def write_raw_data():
 
 
 def build_silver_layer():
+    """
+    Orchestration for the silver layer functions.
+    """
+
+    print("Creating the silver layer...")
+
     rel = duckdb.read_csv(RAW_DATASET_PATH, delimiter=",", quotechar='"', escapechar='"', strict_mode=False, header=True)
 
     # Let's run some tests
@@ -113,6 +119,8 @@ def build_silver_layer():
 
     # And now the facts table
     build_daily_air_quality_fact()
+
+    print("Silver layer created!")
 
 
 def build_date_dim():
@@ -340,7 +348,30 @@ def tests_orchestration(rel: any):
 
     no_negative_index_value(rel=rel)
 
-    print("Tests complete.")
+    check_id_for_gaps(rel=rel)
+
+    print("Tests complete!")
+
+
+def check_id_for_gaps(rel: any):
+    """
+    Check if there are any gaps in the id column.
+    NOTE: this is not a terminating test.
+    """
+
+    gap_query = """
+    SELECT 1
+    FROM (
+        SELECT
+            _id AS id,
+            LEAD(_id) OVER (ORDER BY _id) AS next_id
+        FROM _relation
+    )
+    WHERE next_id - id > 1;
+    """
+
+    if len(rel.query("_relation", gap_query)) > 0:
+        print("Warning: there are gaps in the _id column. This is informational only.")
 
 
 def raw_row_count(rel: any):
@@ -368,6 +399,12 @@ def no_negative_index_value(rel):
 
 
 def build_gold_layer():
+    """
+    Orchestration for the gold layer.
+    """
+
+    print("Creating gold layer...")
+
     # Create the table
     exec_duckdb_sql("""
     CREATE TABLE IF NOT EXISTS polution_episodes (
@@ -425,6 +462,8 @@ def build_gold_layer():
     GROUP BY grp
     ON CONFLICT (start_date, end_date) DO NOTHING;
     """)
+
+    print("Gold layer created! Printing results...\n")
 
     print_polution_episodes()
 
