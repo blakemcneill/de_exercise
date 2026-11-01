@@ -1,6 +1,6 @@
 # Senior Data Engineer Screening
 
-## Instructions
+## Instructions to run
 
 ### Requirements
 
@@ -20,13 +20,13 @@ source .venv/bin/activate
 uv pip install -r requirements.txt
 ```
 
-Once activated, run the following `uv` command to run the application. This will injest the data, build the bronze, silver, and gold layers, and run tests.
+Once activated, run the following `uv` command to run the application. This will ingest the data, build the bronze, silver, and gold layers, and run tests.
 
 ```bash
 uv run main.py
 ```
 
-Connect to the DuckDB database if you want to view the tables. Note: this database won't exist until after the first run.
+Connect to the DuckDB database if you want to view the tables. Requires DuckDB be installed. Note: this database won't exist until after the first run.
 
 ```bash
 duckdb ./air_quality_data/air_quality.duckdb
@@ -57,48 +57,186 @@ Pick **one** dataset from the list below. Build a small, reproducible pipeline t
 
 ## Proposed Solutions
 
-### Option 1 - Overkill
+### Tech stack
+
+#### Option 1 - Overkill
 
 Orchestraton - Apache Airflow
 Blob Storage - Minio
 Transactional - Postgres
 Analytical - DuckDB
-Quality - dbt
+Modeling and Quality - dbt
 
-Way too much for this request. Requires Docker and other packages to be installed.
+Way too much for this request. Has a lot of requirements and a lot could go wrong.
 
-### Option 2 - Too simple
+#### Option 2 - A little simpler but still too much
 
-Just Python and DuckDB. But this is too simple and would need a bit more for data quality and validation.
+Use Python, DuckDB, and dbt. While dbt is very useful and could help out here, it's still another requirement and added complexity.
 
-### Option 3 - The winner
+#### Option 3 - The winner
 
-Take the simplicity of option 2, but add dbt on top. This gives us everything we need to complete the request.
+Just Python and DuckDB. Python because of the speed and use in the data world. DuckDB because it's not complicated to install, plays nicely with Python, it's crazy fast, and I'll always take an excuse to use it.
+
+### Workflow
 
 ```mermaid
 ---
-title: Data Pipeline
+title: Workflow
 ---
 
 flowchart LR
-    injest[Injest Data Set] -->
-    storage[Save Locally] -->
-    duplicate[Avoid Duplicates] -->
-    validate[Validate Data/Quality Checks]
+    bronze[Ingest CSV and load into DuckDB.] -->
+    silvertest[Run tests against the data.] -->
+    silver[Create dimension and fact tables while avoiding duplicate data] -->
+    gold[Create the end user tables also avoiding duplicates.]
 
 ```
+
+## Details of the assignment
+
+For this assignment, I decided to use the Daily AQI Data dataset https://data.wprdc.org/dataset/allegheny-county-air-quality/resource/4ab1e23f-3262-4bd3-adbf-f72f0119108b. I choose AQI considering the region's history with pollution and also I'm a member of the "sensitive groups". I went with the daily dataset instead of the hourly for simplicity and time but I feel like the hourly details would have been more interesting. I also wasn't sure if the index_value per site and parameter are an average or the max for the daily dataset so I had to make assumptions.
+
+### Answers to the requirements with questions
+
+| 3. **Make it re-runnable.** Running it twice must not duplicate or corrupt data. Explain how you’d handle the dataset being updated.
+
+Duplicates are handled via DuckDB's `ON CONFLICT` clause with the insert. This will disregard any duplicates.
+
+One thing that is currently not handled is updates to the raw data. To handle that, I could add in logic to do one of the following:
+- Allow multiple entries for the same date, site, and parameter. If the index_value, or another value, changes, insert that with a way to track it like a "latest" flag or timestamp. Then only use the latest data. The problem with this is either the downstream tables would need to be updated or truncated and re-inserted assuming it's not a view/dynamic table/etc..
+- Update the row in the fact table. This is probably the easiest but then you lose the insights of seeing what changed over time. 
+
+Which answer would depend on the end user and their requirements. 
+
+| 4. **Add data quality checks** that would actually fail on bad data. Include at least one check you wrote because of something you found in this dataset.
+
+This dataset was very clean and I didn't have to do much here. This makes sense since this dataset is most likely a rollup of the hourly dataset.
+
+The one issue I did have was with the line endings in the CSV. This issue was fixed by disabling strict mode for DuckDB's CSV import. 
+
+However, I did add a few checks just to make sure. I added a check to make sure there are no missing index_values. I also added a check to make sure there are actually rows. If there are 0 rows, then we would assume there was something wrong with the ingestion or bronze layer setup.
+
+| 5. **Produce one output table** that could be used to answer a question you chose (state the question).
+
+My original question was going to be to pull the data for any records where the health event contained the word "asthma". But after taking a look at the health events, I realized that only one contained the word "asthma".
+
+I then thought about analyzing the data for the records with index_value above 100. But that was a bit sporadic and nothing too interesting from that.
+
+So I then turned to my friend Claude to come up with some ideas around interesting anaylasis. It came up with a few ideas but the one that grabbed me was pollution episodes for anything above X index_values and affected N sites. 
+
+The question I am asking is "When were there multiple sites with air quality over 100 and how long did it last.
+
+Claude produced this query for me
+
+```sql
+WITH county_day AS (
+    SELECT date, max(worst_index) AS peak,
+           count(DISTINCT site) FILTER (WHERE worst_index > 100) AS sites_over
+    FROM site_day GROUP BY date
+),
+flagged AS (SELECT * FROM county_day WHERE sites_over >= 3),  -- threshold is your call
+grouped AS (
+    SELECT *, date - (row_number() OVER (ORDER BY date))::INT * INTERVAL 1 DAY AS grp
+    FROM flagged
+)
+SELECT min(date) AS start_date, max(date) AS end_date,
+       count(*) AS days, max(peak) AS peak_index, max(sites_over) AS max_sites
+FROM grouped GROUP BY grp ORDER BY start_date;
+```
+
+After some edits from both myself and Claude, we ended up with this final query:
+
+```sql
+WITH county_day AS (
+        SELECT
+            dd.date,
+            max(fdaq.index_value) AS peak_value,
+            arg_max(dp.parameter, fdaq.index_value) AS peak_parameter,
+            count(DISTINCT site_id) FILTER (WHERE index_value > 100) AS sites_over
+        FROM fact_daily_air_quality fdaq
+        INNER JOIN dim_date dd
+            ON fdaq.date_id = dd.id
+        INNER JOIN dim_parameter dp
+            ON fdaq.parameter_id = dp.id
+        GROUP BY dd.date
+        HAVING sites_over > 2
+    ),
+    grouped AS (
+        SELECT
+            date,
+            peak_value,
+            peak_parameter,
+            sites_over,
+            date - (row_number() OVER (ORDER BY date))::INT * INTERVAL 1 DAY AS grp
+        FROM county_day
+    )
+    SELECT
+        min(date) AS start_date,
+        max(date) AS end_date,
+        count(1) AS num_days,
+        max(peak_value) AS max_peak,
+        arg_max(peak_parameter, peak_value) AS peak_parameter,
+        max(sites_over) AS max_sites
+    FROM grouped
+    GROUP BY grp;
+```
+
+Which gives this output:
+
+**Pollution Episodes**
+
+| start_date | end_date | num_days | max_peak | peak_parameter | max_sites |
+|-----|-----|-----|-----|-----|-----|
+| 2017-12-03 | 2017-12-03 | 1 | 163.0 | PM25T | 3 |
+| 2020-11-08 | 2020-11-08 | 1 | 118.0 | PM25 | 3 |
+| 2021-07-05 | 2021-07-05 | 1 | 153.0 | PM25T | 3 |
+| 2021-07-20 | 2021-07-20 | 1 | 129.0 | PM25_640 | 4 |
+| 2023-06-06 | 2023-06-06 | 1 | 115.0 | PM25T | 3 |
+| 2023-06-28 | 2023-06-30 | 3 | 212.0 | PM25_640 | 8 |
+| 2023-07-17 | 2023-07-17 | 1 | 132.0 | PM25_640 | 5 |
+| 2026-07-16 | 2026-07-18 | 3 | 253.0 | PM25_640 | 9 |
+
+| 6. **Write a README.md** covering decision you made in the process: the three most important design decisions and the alternatives you rejected, what surprised you in the data, what you’d do differently at 100x scale or with daily refreshes, and what you didn’t do and why.
+
+Here are the 3 most important design decisions I kept in mind while working on this project
+
+#### Tech stack
+
+** What I chose: ** I approached this task like I do with any project I work on and that's to follow the KISS principle. This is why I went with just Python and DuckDB because I felt like this was all that was needed to accomplish the task.
+** What I rejected: ** Using other tools like PySpark, dbt, Postgres, etc. I rejected the tools like PySpark and dbt as I wanted to keep the modeling simple and it did not require much power. I didn't use other data management tools since DuckDB has an official package and works extremely fast with its in-memory capabilities.
+** Tradeoffs: ** I know that using tools is very common in data engineering and using them would show additional skills. But that would go against me following the KISS principle and would have added additional time to this project.
+
+#### Data Ingestion
+
+** What I chose: ** A single call to download the CSV for the daily air quality dataset. This made it quick to code and quick to pull since the dataset was small.
+** What I rejected: ** Partitioned or paged pulls. I decided to not complicate the call by using the CKAN API to pull the data by date or X amount of records at a time. The current dataset itself was small and doing this would have added more code and more calls.
+** Tradeoffs: ** The major trade off was there were inconsistent line endings that broke DuckDBs CSV import. I had to disable strict mode in order to load the data into DuckDB from the CSV. While this worked for this example, it's not a good practice for something in a production environment. This would also not be usable for a large dataset as the single call could possibly be a large size and rejected by the API, a firewall, or anything else in-between.
+
+#### Data durability and rerunability
+
+** What I chose: ** Use primary keys and `ON CONFLICT DO NOTHING` for loading the datasets. This allowed me to use the power of DuckDB for handling data quality and allowed the script to be executed multiple times without corrupting the data.
+** What I rejected: ** Handling data upserts. If the ingested dataset updated existing records, those would be ignored.
+** Tradeoffs: ** Data quality suffers here. Upserts are silently ignored and that could cause problems. Unless we know for certain that the raw data is only inserted and never updated, this would cause problems.
+
+#### Data findings
+
+One thing that surprised me about the data was how few pollution episodes there were. There are definitely some bad days, but nothing extended. The last entry in July of 2026 doesn't surprise me since that was a large forest fire northwest of the region. 
+
+#### Running at scale
+
+To run this at a greater scale and/or more frequently is when I would start to look at adding additional tools. Something like PySpark to distribute the workload (if needed), Airflow to orchestrate the work, dbt to create the models and do testing, Git tooling (GitLab, GitHub, etc.) to drive things like version control and CI/CD, or many of the other tools out there to assist. The sky is the limit when it comes to tooling, but tooling should not be the first thought. Understanding the customer requirements and the goals should be the first step, then you can begin architecting the solution and add in tools as necessary. It's also unclear if the stack is hosted with a cloud provider or self-hosted. Knowing how much work goes into maintaing the environment would drive certain decisions.
 
 ## Where I had AI help
 
 ### Tell me my first plan was way too much
 
-I put in the reqiurements and my original plan to get an opinion. And as I thought, it came back saying it was too much. But just Python was not enough. So it gave a few options and I landed on Python with DuckDB dbt.
+I put in the reqiurements and my original plan to get an opinion. And as I thought, it came back saying it was too much. But just Python was not enough. So it gave a few options and I landed on Python with DuckDB.
 
-### Guidance on Injesting the data
+### Guidance on Ingesting the data
 
 There were a few ways to do this floating around in my head. Download the CSV via requests, use ckanapi to download the whole dataset, or use ckanapi to get the oldest date and then inject the dataset by day so it can be partitioned and to keep the requests small.
 
-I threw these ideas into Claude and it came back with a forth (why didn't I think of that!) option. Paging the results. It would prevent one large request while also preventing too many small requests.
+I threw these ideas into Claude and it came back with a fourth (why didn't I think of that!) option. Paging the results. It would prevent one large request while also preventing too many small requests.
 
 However, for this I ultimately ended up just going with downloading the CSV. The dataset I'm using is the daily air quality and it's not very large.
 
@@ -116,23 +254,8 @@ A good idea Claude mention was building an AQI dim instead of separate tables fo
 
 It did make me realize I should do a data test to make sure the values and the description match since that's pretty standard.
 
+### Brainstorm some creative output tables
 
-## Random stuff
+I was originally going to play around with the data where there was a health effect that specifically mentioned asthma, but that wasn't much data. I then thought about playing around with the data where the index_value was above 100. More data, but not really that interesting. 
 
-Using duckdb and just running a select * from csv is throwing error. But once it loads once, then it's fine.
-
-SELECT *
-         FROM read_csv('air_quality_data/daily_air_quality.csv');
-
-
-         SELECT *
-         FROM read_csv('air_quality_data/daily_air_quality.csv',delim=',',
-         columns = {
-             '_id': 'INT',
-             'date': 'DATE',
-             'site': 'VARCHAR',
-             'parameter': 'VARCHAR',
-             'index_value': 'FLOAT',
-             'description': 'VARCHAR',
-             'health_advisory': 'VARCHAR',
-             'health_effects': 'VARCHAR'},quote='"',escape='"',strict_mode=false,header=true);
+I had Claude throw out some ideas and one it suggested was pollution episodes. This would be anything that was over X index_value and affected N sites. Decided to go with 100 index_value and 3 or more sites. I did have it help me with the query (explained above).
