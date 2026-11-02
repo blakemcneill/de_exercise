@@ -93,7 +93,7 @@ flowchart LR
 
 ## Details of the assignment
 
-For this assignment, I decided to use the Daily AQI Data dataset https://data.wprdc.org/dataset/allegheny-county-air-quality/resource/4ab1e23f-3262-4bd3-adbf-f72f0119108b. I choose AQI considering the region's history with pollution and also I'm a member of the "sensitive groups". I went with the daily dataset instead of the hourly for simplicity and time but I feel like the hourly details would have been more interesting. I also wasn't sure if the index_value per site and parameter are an average or the max for the daily dataset so I had to make assumptions.
+For this assignment, I decided to use the Daily AQI Data dataset https://data.wprdc.org/dataset/allegheny-county-air-quality/resource/4ab1e23f-3262-4bd3-adbf-f72f0119108b. I chose AQI considering the region's history with pollution and also I'm a member of the "sensitive groups". I went with the daily dataset instead of the hourly for simplicity and time but I feel like the hourly details would have been more interesting. I also wasn't sure if the index_value per site and parameter are an average or the max for the daily dataset so I had to make assumptions.
 
 ### Answers to the requirements with questions
 
