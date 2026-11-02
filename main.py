@@ -407,7 +407,7 @@ def build_gold_layer():
 
     # Create the table
     exec_duckdb_sql("""
-    CREATE TABLE IF NOT EXISTS polution_episodes (
+    CREATE TABLE IF NOT EXISTS pollution_episodes (
         start_date DATE NOT NULL,
         end_date DATE NOT NULL,
         num_days INT NOT NULL,
@@ -417,6 +417,8 @@ def build_gold_layer():
         PRIMARY KEY (start_date, end_date)
     );
     """)
+
+    exec_duckdb_sql("TRUNCATE pollution_episodes;")
 
     # Insert the data
     exec_duckdb_sql("""
@@ -443,7 +445,7 @@ def build_gold_layer():
             date - (row_number() OVER (ORDER BY date))::INT * INTERVAL 1 DAY AS grp
         FROM county_day
     )
-    INSERT INTO polution_episodes (
+    INSERT INTO pollution_episodes (
         start_date,
         end_date,
         num_days,
@@ -459,18 +461,17 @@ def build_gold_layer():
         arg_max(peak_parameter, peak_value) AS peak_parameter,
         max(sites_over) AS max_sites
     FROM grouped
-    GROUP BY grp
-    ON CONFLICT (start_date, end_date) DO NOTHING;
+    GROUP BY grp;
     """)
 
     print("Gold layer created! Printing results...\n")
 
-    print_polution_episodes()
+    print_pollution_episodes()
 
 
-def print_polution_episodes():
+def print_pollution_episodes():
     with duckdb.connect(DUCK_DB_PATH) as conn:
-        conn.table("polution_episodes").order("start_date, end_date").show()
+        conn.table("pollution_episodes").order("start_date, end_date").show()
 
 
 # endregion
