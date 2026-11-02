@@ -17,7 +17,7 @@ Before running the program, create a virtual environment.
 ```bash
 uv venv
 source .venv/bin/activate
-uv pip install -r requirements.txt
+uv pip install -r pyproject.toml
 ```
 
 Once activated, run the following `uv` command to run the application. This will ingest the data, build the bronze, silver, and gold layers, and run tests.
